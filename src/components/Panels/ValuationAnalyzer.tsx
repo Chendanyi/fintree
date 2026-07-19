@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { TrendingDown, TrendingUp, Activity } from 'lucide-react'
 import { useTreeStore } from '../../store/useTreeStore'
 import type { FinancialNode } from '../../types/financialTree'
+import { getActiveTree } from '../../types/financialTree'
 import clsx from 'clsx'
 
 function parseCagrPercent(cagr?: string): number {
@@ -54,25 +55,28 @@ function GaugeBar({
 }
 
 export function ValuationAnalyzer() {
-  const treeData = useTreeStore((s) => s.treeData)
+  const stocks = useTreeStore((s) => s.stocks)
+  const activeSymbol = useTreeStore((s) => s.activeSymbol)
   const activePathNodeIds = useTreeStore((s) => s.activePathNodeIds)
   const selectedNodeId = useTreeStore((s) => s.selectedNodeId)
+  const extinguishedNodeIds = useTreeStore((s) => s.extinguishedNodeIds)
+
+  const treeData = getActiveTree(stocks, activeSymbol)
 
   const analysis = useMemo(() => {
     if (!treeData) return null
 
-    const activeNodes = treeData.nodes.filter((n) =>
-      activePathNodeIds.has(n.id),
+    const liveNodes = treeData.nodes.filter(
+      (n) => !extinguishedNodeIds.has(n.id),
     )
+
+    const activeNodes = liveNodes.filter((n) => activePathNodeIds.has(n.id))
     const leaf =
       activeNodes.find(
         (n) => n.childrenIds.length === 0 && n.targetPrice != null,
       ) ?? null
 
-    const selected =
-      treeData.nodes.find((n) => n.id === selectedNodeId) ?? null
-
-    const bullLeaf = treeData.nodes
+    const bullLeaf = liveNodes
       .filter((n) => n.targetPrice != null)
       .sort((a, b) => (b.targetPrice ?? 0) - (a.targetPrice ?? 0))[0] as
       | FinancialNode
@@ -87,7 +91,6 @@ export function ValuationAnalyzer() {
     const activeCagr = parseCagrPercent(leaf?.cagr)
     const bullCagr = parseCagrPercent(bullLeaf?.cagr)
 
-    // Margin proxy: score path impacts (positive/negative keyword heuristics)
     let marginScore = 50
     for (const n of activeNodes) {
       const m = n.financialImpact?.marginEffect ?? ''
@@ -100,7 +103,6 @@ export function ValuationAnalyzer() {
 
     return {
       leaf,
-      selected,
       targetPrice,
       returnRate,
       activeCagr,
@@ -108,7 +110,7 @@ export function ValuationAnalyzer() {
       marginScore,
       bullMargin,
     }
-  }, [treeData, activePathNodeIds, selectedNodeId])
+  }, [treeData, activePathNodeIds, selectedNodeId, extinguishedNodeIds])
 
   if (!treeData || !analysis) {
     return (
@@ -122,7 +124,7 @@ export function ValuationAnalyzer() {
           </h2>
         </header>
         <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-slate-600">
-          Load a tree to unlock dynamic valuation metrics.
+          Load an asset model to unlock dynamic valuation metrics.
         </div>
       </aside>
     )
