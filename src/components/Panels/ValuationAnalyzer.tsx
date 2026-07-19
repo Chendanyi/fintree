@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { TrendingDown, TrendingUp, Activity } from 'lucide-react'
 import { useTreeStore } from '../../store/useTreeStore'
 import type { FinancialNode } from '../../types/financialTree'
-import { getActiveTree } from '../../types/financialTree'
+import { getActiveSnapshot } from '../../types/financialTree'
 import clsx from 'clsx'
 
 function parseCagrPercent(cagr?: string): number {
@@ -55,22 +55,20 @@ function GaugeBar({
 }
 
 export function ValuationAnalyzer() {
-  const stocks = useTreeStore((s) => s.stocks)
+  const repository = useTreeStore((s) => s.repository)
   const activeSymbol = useTreeStore((s) => s.activeSymbol)
-  const activePathNodeIds = useTreeStore((s) => s.activePathNodeIds)
-  const selectedNodeId = useTreeStore((s) => s.selectedNodeId)
-  const extinguishedNodeIds = useTreeStore((s) => s.extinguishedNodeIds)
 
-  const treeData = getActiveTree(stocks, activeSymbol)
+  const snapshot = getActiveSnapshot(repository, activeSymbol)
+  const treeData = snapshot?.treeData ?? null
 
   const analysis = useMemo(() => {
-    if (!treeData) return null
+    if (!snapshot || !treeData) return null
 
-    const liveNodes = treeData.nodes.filter(
-      (n) => !extinguishedNodeIds.has(n.id),
-    )
+    const extinguished = new Set(snapshot.extinguishedNodeIds)
+    const activePath = new Set(snapshot.activePathNodeIds)
 
-    const activeNodes = liveNodes.filter((n) => activePathNodeIds.has(n.id))
+    const liveNodes = treeData.nodes.filter((n) => !extinguished.has(n.id))
+    const activeNodes = liveNodes.filter((n) => activePath.has(n.id))
     const leaf =
       activeNodes.find(
         (n) => n.childrenIds.length === 0 && n.targetPrice != null,
@@ -110,7 +108,7 @@ export function ValuationAnalyzer() {
       marginScore,
       bullMargin,
     }
-  }, [treeData, activePathNodeIds, selectedNodeId, extinguishedNodeIds])
+  }, [snapshot, treeData])
 
   if (!treeData || !analysis) {
     return (

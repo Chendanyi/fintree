@@ -1,24 +1,20 @@
 export interface FinancialImpact {
-  cagrEffect?: string // e.g., "+15%", "-5%"
-  marginEffect?: string // e.g., "-10%"
-  revenueEffect?: string // e.g., "+$1.2B"
+  cagrEffect?: string
+  marginEffect?: string
+  revenueEffect?: string
 }
 
 export interface FinancialNode {
   id: string
-  lane: string // Chronological tier, matching timelineLanes order
+  lane: string
   title: string
   description: string
-  isLockedFact: boolean // If true, alternative branches are soft-extinguished
+  isLockedFact: boolean
   childrenIds: string[]
-
-  // Terminal Leaf Node Specifics
   targetPrice?: number
   cagr?: string
   netReserveRevenue?: string
   cpnVolume?: string
-
-  // Tactical Intermediate Path Specifics
   financialImpact?: FinancialImpact
 }
 
@@ -26,43 +22,53 @@ export interface TreeData {
   stockSymbol: string
   basePrice: number
   lastUpdated: string
-  timelineLanes: string[] // e.g., ["2026 H2", "2027", "2028-2029", "2031"]
+  timelineLanes: string[]
   nodes: FinancialNode[]
 }
 
 export type TreePatch = Partial<TreeData> & { nodes: FinancialNode[] }
 
-export interface TreeStoreState {
-  /** Multi-asset repository keyed by stockSymbol */
-  stocks: Record<string, TreeData>
-  /** Soft-extinguished node IDs per symbol (fact-lock death paths) */
-  extinguishedBySymbol: Record<string, Set<string>>
-  activeSymbol: string | null
-  activePathNodeIds: Set<string>
+/** Per-ticker graph + independent UI interaction state */
+export interface AssetSnapshot {
+  treeData: TreeData
   selectedNodeId: string | null
-  /** Extinguished IDs for the currently active symbol (view projection) */
-  extinguishedNodeIds: Set<string>
+  activePathNodeIds: string[]
+  extinguishedNodeIds: string[]
+}
+
+export type IngestionRouteStatus = 'NEW_ASSET' | 'CONFLICT' | 'ERROR'
+
+export interface MultiAssetStoreState {
+  repository: Record<string, AssetSnapshot>
+  activeSymbol: string | null
   mergeError: string | null
+  pendingIncomingData: TreeData | null
   statusToast: string | null
 
   setActiveSymbol: (symbol: string) => void
-  initializeNewStock: (data: TreeData) => void
-  mergeStockPatch: (symbol: string, patch: TreePatch) => void
-  overwriteStock: (data: TreeData) => void
-  deleteStock: (symbol: string) => void
+  processIncomingJson: (jsonText: string) => { status: IngestionRouteStatus }
+  executeInitialize: (data: TreeData) => void
+  executeIncrementalMerge: (data: TreeData) => void
+  clearPendingIncoming: () => void
+  deleteAsset: (symbol: string) => void
+  clearMergeError: () => void
+  clearStatusToast: () => void
 
   selectNode: (nodeId: string) => void
   toggleLockFact: (nodeId: string) => void
-  pruneAlternativeBranches: (nodeId: string) => void
-  clearMergeError: () => void
-  clearStatusToast: () => void
 }
 
-/** Safe accessor for the active tree graph */
+export function getActiveSnapshot(
+  repository: Record<string, AssetSnapshot>,
+  activeSymbol: string | null,
+): AssetSnapshot | null {
+  if (!activeSymbol) return null
+  return repository[activeSymbol] ?? null
+}
+
 export function getActiveTree(
-  stocks: Record<string, TreeData>,
+  repository: Record<string, AssetSnapshot>,
   activeSymbol: string | null,
 ): TreeData | null {
-  if (!activeSymbol) return null
-  return stocks[activeSymbol] ?? null
+  return getActiveSnapshot(repository, activeSymbol)?.treeData ?? null
 }

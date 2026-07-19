@@ -38,14 +38,13 @@ On first boot with an empty repository, the canvas shows a landing prompt until 
 
 ## How to use the app
 
-1. **Route JSON** — Paste a full analyst profile and click **Route JSON (Auto Detect)**.
-   - **New symbol** → creates a repository slot, switches to it (pristine / 全亮), shows a success toast.
-   - **Existing symbol** → choose **Smart Incremental Merge** or **Complete Overwrite / Reset**.
-2. **Switch assets** — Use the header dropdown.
+1. **Parse & Route JSON** — Paste a full analyst profile and click the button.
+   - **New symbol** → creates a pristine snapshot (path evaluated), switches to it, toast confirms.
+   - **Existing symbol** → stages a conflict; choose **Combine & Add Branches (Merge)** or **Wipe Old & Overwrite (Reset)**.
+2. **Switch assets** — Use the header dropdown. Each ticker keeps its own selection, active path, and extinguished branches.
 3. **Explore a path** — Click any live node. Active path highlights; inactive branches fade.
-4. **Lock a fact** — Double-click a node. Sibling branches are **soft-extinguished** (opacity 0.1, non-clickable, “EXTINGUISHED BY FACT LOCK” badge) — not hard-deleted.
+4. **Lock a fact** — Double-click a node. Sibling branches are **soft-extinguished** (opacity 0.1, non-clickable, “EXTINGUISHED BY FACT LOCK” badge).
 5. **Unlock** — Double-click again to clear the fact and revive extinguished siblings.
-6. **Merge into active** — Optional shortcut for patches targeted at the current ticker.
 
 ---
 

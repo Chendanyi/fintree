@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import type {
+  AssetSnapshot,
   FinancialNode,
+  MultiAssetStoreState,
   TreeData,
   TreePatch,
-  TreeStoreState,
 } from '../types/financialTree'
-import { getActiveTree } from '../types/financialTree'
+import { getActiveSnapshot } from '../types/financialTree'
 
 function buildParentMap(nodes: FinancialNode[]): Map<string, string> {
   const parentMap = new Map<string, string>()
@@ -26,7 +27,6 @@ function findRootId(nodes: FinancialNode[]): string | null {
   return nodes.find((n) => !parentMap.has(n.id))?.id ?? nodes[0]?.id ?? null
 }
 
-/** Max targetPrice among non-extinguished descendant leaves. */
 function maxLeafWeight(
   nodeId: string,
   nodeMap: Map<string, FinancialNode>,
@@ -36,30 +36,25 @@ function maxLeafWeight(
   const node = nodeMap.get(nodeId)
   if (!node) return 0
   const liveChildren = node.childrenIds.filter((id) => !extinguished.has(id))
-  if (liveChildren.length === 0) {
-    return node.targetPrice ?? 0
-  }
+  if (liveChildren.length === 0) return node.targetPrice ?? 0
   return Math.max(
     ...liveChildren.map((id) => maxLeafWeight(id, nodeMap, extinguished)),
     0,
   )
 }
 
-/**
- * Algorithm A: Active Path Propagation & Ancestor Tracing
- * Skips soft-extinguished branches when descending.
- */
+/** Active path: ancestors to root, then heaviest live leaf descent. */
 export function computeActivePath(
   selectedNodeId: string,
   nodes: FinancialNode[],
   extinguished: Set<string> = new Set(),
-): Set<string> {
+): string[] {
   const nodeMap = buildNodeMap(nodes)
   const parentMap = buildParentMap(nodes)
   const path = new Set<string>()
 
   if (!nodeMap.has(selectedNodeId) || extinguished.has(selectedNodeId)) {
-    return path
+    return []
   }
 
   let current: string | undefined = selectedNodeId
@@ -72,13 +67,11 @@ export function computeActivePath(
   while (true) {
     const node = nodeMap.get(cursor)
     if (!node) break
-
     const liveChildren = node.childrenIds.filter((id) => !extinguished.has(id))
     if (liveChildren.length === 0) break
 
     let bestChild = liveChildren[0]
     let bestWeight = maxLeafWeight(bestChild, nodeMap, extinguished)
-
     for (let i = 1; i < liveChildren.length; i++) {
       const childId = liveChildren[i]
       const weight = maxLeafWeight(childId, nodeMap, extinguished)
@@ -87,12 +80,11 @@ export function computeActivePath(
         bestChild = childId
       }
     }
-
     path.add(bestChild)
     cursor = bestChild
   }
 
-  return path
+  return Array.from(path)
 }
 
 function collectSubtreeIds(
@@ -128,9 +120,6 @@ function deepMergeNode(
   }
 }
 
-/**
- * Algorithm B: Incremental JSON Tree Merging (With Memory Retention)
- */
 export function mergeTreeData(
   current: TreeData,
   newData: TreePatch,
@@ -141,12 +130,11 @@ export function mergeTreeData(
     const existing = nodeMap.get(incoming.id)
     if (existing) {
       if (existing.isLockedFact) {
-        const healedChildren = Array.from(
-          new Set([...existing.childrenIds, ...incoming.childrenIds]),
-        )
         nodeMap.set(incoming.id, {
           ...existing,
-          childrenIds: healedChildren,
+          childrenIds: Array.from(
+            new Set([...existing.childrenIds, ...incoming.childrenIds]),
+          ),
         })
       } else {
         nodeMap.set(incoming.id, deepMergeNode(existing, incoming))
@@ -180,34 +168,25 @@ export function mergeTreeData(
     }
   }
 
-  const timelineLanes = Array.from(
-    new Set([...current.timelineLanes, ...(newData.timelineLanes ?? [])]),
-  )
-
   return {
     data: {
       stockSymbol: newData.stockSymbol ?? current.stockSymbol,
       basePrice: newData.basePrice ?? current.basePrice,
       lastUpdated: newData.lastUpdated ?? current.lastUpdated,
-      timelineLanes,
+      timelineLanes: Array.from(
+        new Set([...current.timelineLanes, ...(newData.timelineLanes ?? [])]),
+      ),
       nodes: Array.from(nodeMap.values()),
     },
     error: null,
   }
 }
 
-/**
- * Algorithm C: Soft-extinguish sibling subtrees (nodes remain in graph).
- */
 export function softExtinguishSiblings(
   nodes: FinancialNode[],
   lockedNodeId: string,
-  priorExtinguished: Set<string> = new Set(),
-): {
-  nodes: FinancialNode[]
-  extinguished: Set<string>
-  revivedOnUnlock?: never
-} {
+  priorExtinguished: string[],
+): { nodes: FinancialNode[]; extinguishedNodeIds: string[] } {
   const nextNodes = nodes.map((n) => ({
     ...n,
     childrenIds: [...n.childrenIds],
@@ -219,291 +198,363 @@ export function softExtinguishSiblings(
 
   const parentId = parentMap.get(lockedNodeId)
   if (!parentId) {
-    return { nodes: nextNodes, extinguished }
+    return { nodes: nextNodes, extinguishedNodeIds: Array.from(extinguished) }
   }
 
   const parent = nodeMap.get(parentId)!
-  const siblings = parent.childrenIds.filter((id) => id !== lockedNodeId)
-
-  for (const siblingId of siblings) {
-    const subtree = collectSubtreeIds(siblingId, nodeMap)
-    for (const id of subtree) {
+  for (const siblingId of parent.childrenIds.filter((id) => id !== lockedNodeId)) {
+    for (const id of collectSubtreeIds(siblingId, nodeMap)) {
       extinguished.add(id)
     }
   }
 
-  return { nodes: nextNodes, extinguished }
+  return { nodes: nextNodes, extinguishedNodeIds: Array.from(extinguished) }
 }
 
-/** On unlock: revive sibling subtrees that were extinguished by this lock. */
 export function reviveSiblingSubtrees(
   nodes: FinancialNode[],
   unlockedNodeId: string,
-  extinguished: Set<string>,
-): Set<string> {
+  extinguished: string[],
+): string[] {
   const parentMap = buildParentMap(nodes)
   const nodeMap = buildNodeMap(nodes)
   const parentId = parentMap.get(unlockedNodeId)
-  if (!parentId) return new Set(extinguished)
+  if (!parentId) return [...extinguished]
 
   const parent = nodeMap.get(parentId)
-  if (!parent) return new Set(extinguished)
+  if (!parent) return [...extinguished]
 
-  const siblings = parent.childrenIds.filter((id) => id !== unlockedNodeId)
   const revived = new Set(extinguished)
-  for (const siblingId of siblings) {
-    const subtree = collectSubtreeIds(siblingId, nodeMap)
-    for (const id of subtree) {
+  for (const siblingId of parent.childrenIds.filter((id) => id !== unlockedNodeId)) {
+    for (const id of collectSubtreeIds(siblingId, nodeMap)) {
       revived.delete(id)
     }
   }
-  return revived
+  return Array.from(revived)
 }
 
-function projectViewState(
-  tree: TreeData,
-  extinguished: Set<string>,
-  preferredSelected?: string | null,
-): {
-  selectedNodeId: string | null
-  activePathNodeIds: Set<string>
-} {
-  const livePreferred =
-    preferredSelected &&
-    tree.nodes.some((n) => n.id === preferredSelected) &&
-    !extinguished.has(preferredSelected)
-      ? preferredSelected
-      : null
-
-  const selectedNodeId = livePreferred ?? findRootId(tree.nodes)
+function buildPristineSnapshot(data: TreeData): AssetSnapshot {
+  const treeData = structuredClone(data)
+  const selectedNodeId = findRootId(treeData.nodes)
   const activePathNodeIds = selectedNodeId
-    ? computeActivePath(selectedNodeId, tree.nodes, extinguished)
-    : new Set<string>()
-
-  return { selectedNodeId, activePathNodeIds }
+    ? computeActivePath(selectedNodeId, treeData.nodes, new Set())
+    : []
+  return {
+    treeData,
+    selectedNodeId,
+    activePathNodeIds,
+    extinguishedNodeIds: [],
+  }
 }
 
-export const useTreeStore = create<TreeStoreState>((set, get) => ({
-  stocks: {},
-  extinguishedBySymbol: {},
+function coerceNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
+function parseAndValidateFullTree(
+  jsonText: string,
+): { ok: true; data: TreeData } | { ok: false; error: string } {
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>
+    if (!parsed.stockSymbol || typeof parsed.stockSymbol !== 'string') {
+      return { ok: false, error: 'JSON must include a string "stockSymbol".' }
+    }
+    if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
+      return { ok: false, error: 'JSON must include a "nodes" array.' }
+    }
+
+    const basePrice = coerceNumber(parsed.basePrice)
+    if (basePrice == null) {
+      return {
+        ok: false,
+        error:
+          'JSON must include numeric "basePrice" (e.g. 65.69 — not "65.69" in quotes, and not missing).',
+      }
+    }
+
+    if (!parsed.timelineLanes || !Array.isArray(parsed.timelineLanes)) {
+      return {
+        ok: false,
+        error: 'JSON must include a "timelineLanes" array.',
+      }
+    }
+
+    const lastUpdated =
+      typeof parsed.lastUpdated === 'string'
+        ? parsed.lastUpdated
+        : new Date().toISOString().slice(0, 10)
+
+    return {
+      ok: true,
+      data: {
+        stockSymbol: parsed.stockSymbol,
+        basePrice,
+        lastUpdated,
+        timelineLanes: parsed.timelineLanes as string[],
+        nodes: parsed.nodes as TreeData['nodes'],
+      },
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Invalid JSON syntax',
+    }
+  }
+}
+
+function updateActiveSnapshot(
+  state: MultiAssetStoreState,
+  mutator: (snap: AssetSnapshot) => AssetSnapshot,
+): Partial<MultiAssetStoreState> | null {
+  const { activeSymbol, repository } = state
+  if (!activeSymbol) return null
+  const current = repository[activeSymbol]
+  if (!current) return null
+  return {
+    repository: {
+      ...repository,
+      [activeSymbol]: mutator(current),
+    },
+  }
+}
+
+export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
+  repository: {},
   activeSymbol: null,
-  activePathNodeIds: new Set(),
-  selectedNodeId: null,
-  extinguishedNodeIds: new Set(),
   mergeError: null,
+  pendingIncomingData: null,
   statusToast: null,
 
   clearMergeError: () => set({ mergeError: null }),
   clearStatusToast: () => set({ statusToast: null }),
+  clearPendingIncoming: () =>
+    set({ pendingIncomingData: null, mergeError: null }),
 
   setActiveSymbol: (symbol) => {
-    const { stocks, extinguishedBySymbol, selectedNodeId } = get()
-    const tree = stocks[symbol]
-    if (!tree) {
+    const { repository } = get()
+    if (!repository[symbol]) {
       set({ mergeError: `Unknown symbol: ${symbol}` })
       return
     }
-    const extinguished = extinguishedBySymbol[symbol] ?? new Set()
-    const view = projectViewState(tree, extinguished, selectedNodeId)
     set({
       activeSymbol: symbol,
-      extinguishedNodeIds: new Set(extinguished),
+      pendingIncomingData: null,
       mergeError: null,
-      ...view,
     })
   },
 
-  initializeNewStock: (data) => {
-    const symbol = data.stockSymbol
-    const clone = structuredClone(data)
-    const view = projectViewState(clone, new Set())
-
-    set((state) => ({
-      stocks: { ...state.stocks, [symbol]: clone },
-      extinguishedBySymbol: {
-        ...state.extinguishedBySymbol,
-        [symbol]: new Set(),
-      },
-      activeSymbol: symbol,
-      extinguishedNodeIds: new Set(),
-      mergeError: null,
-      statusToast: `Successfully initialized new asset: ${symbol}`,
-      ...view,
-    }))
-  },
-
-  overwriteStock: (data) => {
-    const symbol = data.stockSymbol
-    const clone = structuredClone(data)
-    const view = projectViewState(clone, new Set())
-
-    set((state) => ({
-      stocks: { ...state.stocks, [symbol]: clone },
-      extinguishedBySymbol: {
-        ...state.extinguishedBySymbol,
-        [symbol]: new Set(),
-      },
-      activeSymbol: symbol,
-      extinguishedNodeIds: new Set(),
-      mergeError: null,
-      statusToast: `Overwrote asset model: ${symbol}`,
-      ...view,
-    }))
-  },
-
-  mergeStockPatch: (symbol, patch) => {
-    const current = get().stocks[symbol]
-    if (!current) {
+  /**
+   * Algorithm A — Ingestion Router Pipeline
+   * NEW_ASSET → pristine snapshot; CONFLICT → stage pendingIncomingData.
+   */
+  processIncomingJson: (jsonText) => {
+    const parsed = parseAndValidateFullTree(jsonText)
+    if (!parsed.ok) {
       set({
-        mergeError: `No tree for ${symbol}. Initialize the asset first.`,
+        mergeError: parsed.error,
+        pendingIncomingData: null,
+      })
+      return { status: 'ERROR' }
+    }
+
+    const data = parsed.data
+    const symbol = data.stockSymbol
+    const exists = Boolean(get().repository[symbol])
+
+    if (!exists) {
+      const snapshot = buildPristineSnapshot(data)
+      set((state) => ({
+        repository: { ...state.repository, [symbol]: snapshot },
+        activeSymbol: symbol,
+        pendingIncomingData: null,
+        mergeError: null,
+        statusToast: `Successfully initialized new asset: ${symbol}`,
+      }))
+      return { status: 'NEW_ASSET' }
+    }
+
+    // Conflict — do not mutate repository yet
+    set({
+      pendingIncomingData: data,
+      mergeError: null,
+    })
+    return { status: 'CONFLICT' }
+  },
+
+  /** Fresh overwrite / first-time write for a symbol */
+  executeInitialize: (data) => {
+    const symbol = data.stockSymbol
+    const snapshot = buildPristineSnapshot(data)
+    set((state) => ({
+      repository: { ...state.repository, [symbol]: snapshot },
+      activeSymbol: symbol,
+      pendingIncomingData: null,
+      mergeError: null,
+      statusToast: state.repository[symbol]
+        ? `Overwrote asset model: ${symbol}`
+        : `Successfully initialized new asset: ${symbol}`,
+    }))
+  },
+
+  /** Smart merge into existing snapshot — keeps locks, path, extinguish state */
+  executeIncrementalMerge: (data) => {
+    const symbol = data.stockSymbol
+    const existing = get().repository[symbol]
+    if (!existing) {
+      set({
+        mergeError: `No snapshot for ${symbol}. Initialize first.`,
+        pendingIncomingData: null,
       })
       return
     }
 
-    const { data, error } = mergeTreeData(current, patch)
+    const { data: merged, error } = mergeTreeData(existing.treeData, data)
     if (error) {
       set({ mergeError: error })
       return
     }
 
-    // If patch renames symbol key, keep repository key stable to `symbol`
-    const stored: TreeData = { ...data, stockSymbol: symbol }
-    const extinguished =
-      get().extinguishedBySymbol[symbol] ?? new Set<string>()
-    const view = projectViewState(stored, extinguished, get().selectedNodeId)
+    const storedTree: TreeData = { ...merged, stockSymbol: symbol }
+    const extinguished = new Set(existing.extinguishedNodeIds)
+    const preferred =
+      existing.selectedNodeId &&
+      storedTree.nodes.some((n) => n.id === existing.selectedNodeId) &&
+      !extinguished.has(existing.selectedNodeId)
+        ? existing.selectedNodeId
+        : findRootId(storedTree.nodes)
+
+    const activePathNodeIds = preferred
+      ? computeActivePath(preferred, storedTree.nodes, extinguished)
+      : []
 
     set((state) => ({
-      stocks: { ...state.stocks, [symbol]: stored },
+      repository: {
+        ...state.repository,
+        [symbol]: {
+          treeData: storedTree,
+          selectedNodeId: preferred,
+          activePathNodeIds,
+          extinguishedNodeIds: existing.extinguishedNodeIds,
+        },
+      },
       activeSymbol: symbol,
-      extinguishedNodeIds: new Set(extinguished),
+      pendingIncomingData: null,
       mergeError: null,
       statusToast: `Smart merge applied to ${symbol}`,
-      ...view,
     }))
   },
 
-  deleteStock: (symbol) => {
-    const { stocks, extinguishedBySymbol, activeSymbol } = get()
-    if (!stocks[symbol]) return
+  deleteAsset: (symbol) => {
+    const { repository, activeSymbol } = get()
+    if (!repository[symbol]) return
 
-    const nextStocks = { ...stocks }
-    delete nextStocks[symbol]
-    const nextExt = { ...extinguishedBySymbol }
-    delete nextExt[symbol]
+    const nextRepo = { ...repository }
+    delete nextRepo[symbol]
+    const remaining = Object.keys(nextRepo)
 
-    const remaining = Object.keys(nextStocks)
     if (activeSymbol === symbol) {
       if (remaining.length === 0) {
         set({
-          stocks: nextStocks,
-          extinguishedBySymbol: nextExt,
+          repository: nextRepo,
           activeSymbol: null,
-          selectedNodeId: null,
-          activePathNodeIds: new Set(),
-          extinguishedNodeIds: new Set(),
+          pendingIncomingData: null,
           statusToast: `Removed ${symbol} from repository`,
         })
         return
       }
-      const nextSymbol = remaining[0]
-      const tree = nextStocks[nextSymbol]
-      const extinguished = nextExt[nextSymbol] ?? new Set()
-      const view = projectViewState(tree, extinguished)
       set({
-        stocks: nextStocks,
-        extinguishedBySymbol: nextExt,
-        activeSymbol: nextSymbol,
-        extinguishedNodeIds: new Set(extinguished),
-        statusToast: `Removed ${symbol}. Switched to ${nextSymbol}`,
-        ...view,
+        repository: nextRepo,
+        activeSymbol: remaining[0],
+        pendingIncomingData: null,
+        statusToast: `Removed ${symbol}. Switched to ${remaining[0]}`,
       })
       return
     }
 
     set({
-      stocks: nextStocks,
-      extinguishedBySymbol: nextExt,
+      repository: nextRepo,
       statusToast: `Removed ${symbol} from repository`,
     })
   },
 
   selectNode: (nodeId) => {
-    const { stocks, activeSymbol, extinguishedNodeIds } = get()
-    const tree = getActiveTree(stocks, activeSymbol)
-    if (!tree) return
-    if (extinguishedNodeIds.has(nodeId)) return
-    if (!tree.nodes.some((n) => n.id === nodeId)) return
+    const state = get()
+    if (!state.activeSymbol) return
+    const snap = getActiveSnapshot(state.repository, state.activeSymbol)
+    if (!snap) return
+    if (snap.extinguishedNodeIds.includes(nodeId)) return
+    if (!snap.treeData.nodes.some((n) => n.id === nodeId)) return
 
-    set({
-      selectedNodeId: nodeId,
-      activePathNodeIds: computeActivePath(
-        nodeId,
-        tree.nodes,
-        extinguishedNodeIds,
-      ),
-    })
-  },
-
-  pruneAlternativeBranches: (nodeId) => {
-    const { stocks, activeSymbol, extinguishedBySymbol } = get()
-    const tree = getActiveTree(stocks, activeSymbol)
-    if (!tree || !activeSymbol) return
-
-    const prior = extinguishedBySymbol[activeSymbol] ?? new Set()
-    const { nodes, extinguished } = softExtinguishSiblings(
-      tree.nodes,
+    const activePathNodeIds = computeActivePath(
       nodeId,
-      prior,
+      snap.treeData.nodes,
+      new Set(snap.extinguishedNodeIds),
     )
-    const nextTree = { ...tree, nodes }
-    const view = projectViewState(nextTree, extinguished, nodeId)
 
-    set((state) => ({
-      stocks: { ...state.stocks, [activeSymbol]: nextTree },
-      extinguishedBySymbol: {
-        ...state.extinguishedBySymbol,
-        [activeSymbol]: extinguished,
-      },
-      extinguishedNodeIds: new Set(extinguished),
-      ...view,
+    const patch = updateActiveSnapshot(state, (s) => ({
+      ...s,
+      selectedNodeId: nodeId,
+      activePathNodeIds,
     }))
+    if (patch) set(patch)
   },
 
   toggleLockFact: (nodeId) => {
-    const { stocks, activeSymbol, extinguishedBySymbol } = get()
-    const tree = getActiveTree(stocks, activeSymbol)
-    if (!tree || !activeSymbol) return
-    if ((extinguishedBySymbol[activeSymbol] ?? new Set()).has(nodeId)) return
+    const state = get()
+    if (!state.activeSymbol) return
+    const snap = getActiveSnapshot(state.repository, state.activeSymbol)
+    if (!snap) return
+    if (snap.extinguishedNodeIds.includes(nodeId)) return
 
-    const target = tree.nodes.find((n) => n.id === nodeId)
+    const target = snap.treeData.nodes.find((n) => n.id === nodeId)
     if (!target) return
 
     if (!target.isLockedFact) {
-      get().pruneAlternativeBranches(nodeId)
+      const { nodes, extinguishedNodeIds } = softExtinguishSiblings(
+        snap.treeData.nodes,
+        nodeId,
+        snap.extinguishedNodeIds,
+      )
+      const activePathNodeIds = computeActivePath(
+        nodeId,
+        nodes,
+        new Set(extinguishedNodeIds),
+      )
+      const patch = updateActiveSnapshot(state, (s) => ({
+        treeData: { ...s.treeData, nodes },
+        selectedNodeId: nodeId,
+        activePathNodeIds,
+        extinguishedNodeIds,
+      }))
+      if (patch) set(patch)
       return
     }
 
-    // Unlock — clear fact flag and revive soft-extinguished siblings
-    const prior = extinguishedBySymbol[activeSymbol] ?? new Set()
-    const revived = reviveSiblingSubtrees(tree.nodes, nodeId, prior)
-    const nodes = tree.nodes.map((n) =>
+    const extinguishedNodeIds = reviveSiblingSubtrees(
+      snap.treeData.nodes,
+      nodeId,
+      snap.extinguishedNodeIds,
+    )
+    const nodes = snap.treeData.nodes.map((n) =>
       n.id === nodeId ? { ...n, isLockedFact: false } : n,
     )
-    const nextTree = { ...tree, nodes }
-    const view = projectViewState(
-      nextTree,
-      revived,
-      get().selectedNodeId ?? nodeId,
+    const selectedNodeId = snap.selectedNodeId ?? nodeId
+    const activePathNodeIds = computeActivePath(
+      selectedNodeId,
+      nodes,
+      new Set(extinguishedNodeIds),
     )
-
-    set((state) => ({
-      stocks: { ...state.stocks, [activeSymbol]: nextTree },
-      extinguishedBySymbol: {
-        ...state.extinguishedBySymbol,
-        [activeSymbol]: revived,
-      },
-      extinguishedNodeIds: new Set(revived),
-      ...view,
+    const patch = updateActiveSnapshot(state, (s) => ({
+      treeData: { ...s.treeData, nodes },
+      selectedNodeId,
+      activePathNodeIds,
+      extinguishedNodeIds,
     }))
+    if (patch) set(patch)
   },
 }))
