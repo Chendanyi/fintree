@@ -3,7 +3,11 @@ import { CheckCircle2, GitBranch, X } from 'lucide-react'
 import { IngestionTerminal } from './components/Panels/IngestionTerminal'
 import { ValuationAnalyzer } from './components/Panels/ValuationAnalyzer'
 import { DecisionCanvas } from './components/Canvas/DecisionCanvas'
-import { HeaderTickerHub } from './components/Shared/HeaderTickerHub'
+import {
+  HeaderTickerHub,
+  ViewSwitcher,
+} from './components/Shared/HeaderTickerHub'
+import { PortfolioMatrix } from './components/Dashboard/PortfolioMatrix'
 import { useTreeStore } from './store/useTreeStore'
 
 function StatusToast() {
@@ -38,9 +42,11 @@ function StatusToast() {
 }
 
 export default function App() {
+  const currentView = useTreeStore((s) => s.currentView)
+
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-slate-800 bg-slate-950/95 px-4 backdrop-blur">
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
+      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/95 px-4 backdrop-blur">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-600/20 ring-1 ring-emerald-500/40">
             <GitBranch className="h-4 w-4 text-emerald-400" />
@@ -55,15 +61,23 @@ export default function App() {
           </div>
         </div>
 
+        <ViewSwitcher />
+
         <HeaderTickerHub />
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <IngestionTerminal />
-        <section className="min-w-0 flex-1">
-          <DecisionCanvas />
-        </section>
-        <ValuationAnalyzer />
+        {currentView === 'dashboard' ? (
+          <PortfolioMatrix />
+        ) : (
+          <>
+            <IngestionTerminal />
+            <section className="min-w-0 flex-1">
+              <DecisionCanvas />
+            </section>
+            <ValuationAnalyzer />
+          </>
+        )}
       </main>
 
       <StatusToast />

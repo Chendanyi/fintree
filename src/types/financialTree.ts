@@ -38,6 +38,8 @@ export interface AssetSnapshot {
 
 export type IngestionRouteStatus = 'NEW_ASSET' | 'CONFLICT' | 'ERROR'
 
+export type WorkspaceView = 'canvas' | 'dashboard'
+
 export const STORAGE_REPO_KEY = 'fintree_sandbox_repository'
 export const STORAGE_SYMBOL_KEY = 'fintree_active_symbol'
 
@@ -47,11 +49,14 @@ export const TOPOLOGY_LOOP_ERROR =
 export interface MultiAssetStoreState {
   repository: Record<string, AssetSnapshot>
   activeSymbol: string | null
+  currentView: WorkspaceView
   mergeError: string | null
   pendingIncomingData: TreeData | null
   statusToast: string | null
 
   setActiveSymbol: (symbol: string) => void
+  setView: (view: WorkspaceView) => void
+  cloneAsset: (sourceSymbol: string, newSymbolName: string) => void
   processIncomingJson: (jsonText: string) => { status: IngestionRouteStatus }
   executeInitialize: (data: TreeData) => void
   executeIncrementalMerge: (data: TreeData) => void

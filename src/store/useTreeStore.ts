@@ -472,9 +472,24 @@ function updateActiveSnapshot(
 
 const hydrated = loadPersistedState()
 
+/** Derive terminal targetPrice along the snapshot's active path. */
+export function deriveActiveLeafTarget(snapshot: AssetSnapshot): number | null {
+  const active = new Set(snapshot.activePathNodeIds)
+  const extinguished = new Set(snapshot.extinguishedNodeIds)
+  const leaf = snapshot.treeData.nodes.find(
+    (n) =>
+      active.has(n.id) &&
+      !extinguished.has(n.id) &&
+      n.childrenIds.length === 0 &&
+      n.targetPrice != null,
+  )
+  return leaf?.targetPrice ?? null
+}
+
 export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
   repository: hydrated.repository,
   activeSymbol: hydrated.activeSymbol,
+  currentView: 'canvas',
   mergeError: null,
   pendingIncomingData: null,
   statusToast: null,
@@ -483,6 +498,8 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
   clearStatusToast: () => set({ statusToast: null }),
   clearPendingIncoming: () =>
     set({ pendingIncomingData: null, mergeError: null }),
+
+  setView: (view) => set({ currentView: view }),
 
   setActiveSymbol: (symbol) => {
     const { repository } = get()
@@ -495,6 +512,41 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
       pendingIncomingData: null,
       mergeError: null,
     })
+  },
+
+  cloneAsset: (sourceSymbol, newSymbolName) => {
+    const trimmed = newSymbolName.trim()
+    if (!trimmed) {
+      set({ mergeError: 'Clone failed: scenario name cannot be empty.' })
+      return
+    }
+    const { repository } = get()
+    const source = repository[sourceSymbol]
+    if (!source) {
+      set({ mergeError: `Clone failed: unknown source "${sourceSymbol}".` })
+      return
+    }
+    if (repository[trimmed]) {
+      set({
+        mergeError: `Clone failed: "${trimmed}" already exists in the repository.`,
+      })
+      return
+    }
+
+    const cloned: AssetSnapshot = structuredClone(source)
+    cloned.treeData = {
+      ...cloned.treeData,
+      stockSymbol: trimmed,
+    }
+
+    set((state) => ({
+      repository: { ...state.repository, [trimmed]: cloned },
+      activeSymbol: trimmed,
+      currentView: 'canvas',
+      pendingIncomingData: null,
+      mergeError: null,
+      statusToast: `Branched scenario: ${trimmed}`,
+    }))
   },
 
   processIncomingJson: (jsonText) => {
