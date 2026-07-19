@@ -16,10 +16,7 @@ interface MatrixRow {
 function buildRow(symbol: string, snapshot: AssetSnapshot): MatrixRow {
   const basePrice = snapshot.treeData.basePrice
   const targetPrice = deriveActiveLeafTarget(snapshot)
-  const upsidePct =
-    targetPrice != null && basePrice !== 0
-      ? ((targetPrice - basePrice) / basePrice) * 100
-      : null
+  const upsidePct = computeImpliedUpsidePct(basePrice, targetPrice)
   const lockedFacts = snapshot.treeData.nodes
     .filter((n) => n.isLockedFact)
     .map((n) => n.title)
@@ -32,6 +29,22 @@ function buildRow(symbol: string, snapshot: AssetSnapshot): MatrixRow {
     lockedFacts,
     extinguishedCount: snapshot.extinguishedNodeIds.length,
   }
+}
+
+/** Pure upside formula for Portfolio Matrix cells (and unit tests). */
+export function computeImpliedUpsidePct(
+  basePrice: number,
+  targetPrice: number | null,
+): number | null {
+  if (targetPrice == null || basePrice === 0) return null
+  return ((targetPrice - basePrice) / basePrice) * 100
+}
+
+export function buildMatrixRow(
+  symbol: string,
+  snapshot: AssetSnapshot,
+): MatrixRow {
+  return buildRow(symbol, snapshot)
 }
 
 export function PortfolioMatrix() {

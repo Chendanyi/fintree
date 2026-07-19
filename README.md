@@ -40,6 +40,7 @@ Open the URL Vite prints (usually `http://127.0.0.1:5173`).
 | Command | Purpose |
 |---------|---------|
 | `npm run dev` | Local development server |
+| `npm test` | Run Vitest suite (graph, store, Portfolio Matrix) |
 | `npm run build` | Production build |
 | `npm run preview` | Preview the production build |
 
