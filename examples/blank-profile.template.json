@@ -1,0 +1,65 @@
+{
+  "stockSymbol": "TICKER",
+  "basePrice": 0,
+  "lastUpdated": "YYYY-MM-DD",
+  "timelineLanes": ["Period 1", "Period 2", "Period 3", "Terminal"],
+  "nodes": [
+    {
+      "id": "node_root",
+      "lane": "Period 1",
+      "title": "Root decision or catalyst",
+      "description": "What happened or what must be decided first.",
+      "isLockedFact": false,
+      "childrenIds": ["path_a", "path_b"]
+    },
+    {
+      "id": "path_a",
+      "lane": "Period 2",
+      "title": "Path A",
+      "description": "Bullish / preferred strategic branch.",
+      "isLockedFact": false,
+      "financialImpact": {
+        "cagrEffect": "+15%",
+        "marginEffect": "-5%",
+        "revenueEffect": "+$1.0B"
+      },
+      "childrenIds": ["leaf_bull"]
+    },
+    {
+      "id": "path_b",
+      "lane": "Period 2",
+      "title": "Path B",
+      "description": "Alternative / downside strategic branch.",
+      "isLockedFact": false,
+      "financialImpact": {
+        "cagrEffect": "-10%",
+        "marginEffect": "flat"
+      },
+      "childrenIds": ["leaf_bear"]
+    },
+    {
+      "id": "leaf_bull",
+      "lane": "Terminal",
+      "title": "Bull Case",
+      "description": "Terminal upside valuation outcome.",
+      "isLockedFact": false,
+      "targetPrice": 100.0,
+      "cagr": "25%",
+      "netReserveRevenue": "$1.0B",
+      "cpnVolume": "$50B/year",
+      "childrenIds": []
+    },
+    {
+      "id": "leaf_bear",
+      "lane": "Terminal",
+      "title": "Bear Case",
+      "description": "Terminal downside valuation outcome.",
+      "isLockedFact": false,
+      "targetPrice": 40.0,
+      "cagr": "5%",
+      "netReserveRevenue": "$0.2B",
+      "cpnVolume": "$10B/year",
+      "childrenIds": []
+    }
+  ]
+}

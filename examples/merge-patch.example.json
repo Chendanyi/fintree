@@ -1,0 +1,43 @@
+{
+  "stockSymbol": "CRCL.N (Circle Internet Group)",
+  "basePrice": 70.12,
+  "lastUpdated": "2026-08-01",
+  "timelineLanes": ["2032"],
+  "nodes": [
+    {
+      "id": "leaf_bull_case",
+      "lane": "2031",
+      "title": "Bull Case (revised)",
+      "description": "Updated bull terminal after new catalyst — merges into existing node by id.",
+      "isLockedFact": false,
+      "targetPrice": 260.0,
+      "cagr": "42%",
+      "netReserveRevenue": "$6.0B",
+      "cpnVolume": "$320B/年",
+      "childrenIds": []
+    },
+    {
+      "id": "leaf_stretch_case",
+      "lane": "2032",
+      "title": "Stretch Case",
+      "description": "New leaf appended via incremental merge (new id).",
+      "isLockedFact": false,
+      "targetPrice": 300.0,
+      "cagr": "45%",
+      "netReserveRevenue": "$7.0B",
+      "cpnVolume": "$400B/年",
+      "childrenIds": []
+    },
+    {
+      "id": "path_x_high_exec",
+      "lane": "2028-2029",
+      "title": "路径 X：高效反击",
+      "description": "Parent heal example — childrenIds gains the new stretch leaf.",
+      "isLockedFact": false,
+      "financialImpact": {
+        "revenueEffect": "+$3.5B"
+      },
+      "childrenIds": ["leaf_bull_case", "leaf_stretch_case"]
+    }
+  ]
+}

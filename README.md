@@ -51,6 +51,15 @@ On first boot with an empty repository, the canvas shows a landing prompt until 
 
 ## How to feed data
 
+**Ready-made examples for analysts** live in [`examples/`](./examples/):
+
+| File | Purpose |
+|------|---------|
+| [`examples/blank-profile.template.json`](./examples/blank-profile.template.json) | Blank scaffold for a new ticker |
+| [`examples/crcl-n.full-profile.json`](./examples/crcl-n.full-profile.json) | Complete working CRCL.N profile |
+| [`examples/merge-patch.example.json`](./examples/merge-patch.example.json) | Incremental merge patch sample |
+| [`examples/README.md`](./examples/README.md) | Field checklist and schema notes |
+
 All input is **JSON** in the left terminal. Full initialize / overwrite payloads need:
 
 ```json
