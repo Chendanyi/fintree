@@ -38,6 +38,12 @@ export interface AssetSnapshot {
 
 export type IngestionRouteStatus = 'NEW_ASSET' | 'CONFLICT' | 'ERROR'
 
+export const STORAGE_REPO_KEY = 'fintree_sandbox_repository'
+export const STORAGE_SYMBOL_KEY = 'fintree_active_symbol'
+
+export const TOPOLOGY_LOOP_ERROR =
+  'Topology Loop Detected: The financial model contains circular parent-child paths.'
+
 export interface MultiAssetStoreState {
   repository: Record<string, AssetSnapshot>
   activeSymbol: string | null
@@ -56,6 +62,10 @@ export interface MultiAssetStoreState {
 
   selectNode: (nodeId: string) => void
   toggleLockFact: (nodeId: string) => void
+
+  /** Session safety net */
+  exportVault: () => void
+  importVault: (jsonText: string) => { ok: boolean; error?: string }
 }
 
 export function getActiveSnapshot(

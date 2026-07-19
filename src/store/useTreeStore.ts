@@ -6,7 +6,12 @@ import type {
   TreeData,
   TreePatch,
 } from '../types/financialTree'
-import { getActiveSnapshot } from '../types/financialTree'
+import {
+  STORAGE_REPO_KEY,
+  STORAGE_SYMBOL_KEY,
+  TOPOLOGY_LOOP_ERROR,
+  getActiveSnapshot,
+} from '../types/financialTree'
 
 function buildParentMap(nodes: FinancialNode[]): Map<string, string> {
   const parentMap = new Map<string, string>()
@@ -27,6 +32,37 @@ function findRootId(nodes: FinancialNode[]): string | null {
   return nodes.find((n) => !parentMap.has(n.id))?.id ?? nodes[0]?.id ?? null
 }
 
+/**
+ * Feature A — DAG cycle detection (edges: parent → child via childrenIds).
+ * Returns true if a directed cycle exists.
+ */
+export function detectCycle(nodes: FinancialNode[]): boolean {
+  const nodeMap = buildNodeMap(nodes)
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+
+  const dfs = (id: string): boolean => {
+    if (visiting.has(id)) return true
+    if (visited.has(id)) return false
+    visiting.add(id)
+    const node = nodeMap.get(id)
+    if (node) {
+      for (const childId of node.childrenIds) {
+        if (!nodeMap.has(childId)) continue
+        if (dfs(childId)) return true
+      }
+    }
+    visiting.delete(id)
+    visited.add(id)
+    return false
+  }
+
+  for (const node of nodes) {
+    if (!visited.has(node.id) && dfs(node.id)) return true
+  }
+  return false
+}
+
 function maxLeafWeight(
   nodeId: string,
   nodeMap: Map<string, FinancialNode>,
@@ -43,7 +79,7 @@ function maxLeafWeight(
   )
 }
 
-/** Active path: ancestors to root, then heaviest live leaf descent. */
+/** Active path with visited guard against accidental cycles. */
 export function computeActivePath(
   selectedNodeId: string,
   nodes: FinancialNode[],
@@ -58,13 +94,19 @@ export function computeActivePath(
   }
 
   let current: string | undefined = selectedNodeId
+  const upGuard = new Set<string>()
   while (current) {
+    if (upGuard.has(current)) break
+    upGuard.add(current)
     path.add(current)
     current = parentMap.get(current)
   }
 
   let cursor = selectedNodeId
+  const downGuard = new Set<string>()
   while (true) {
+    if (downGuard.has(cursor)) break
+    downGuard.add(cursor)
     const node = nodeMap.get(cursor)
     if (!node) break
     const liveChildren = node.childrenIds.filter((id) => !extinguished.has(id))
@@ -103,16 +145,22 @@ function collectSubtreeIds(
   return ids
 }
 
-function deepMergeNode(
+/**
+ * Feature B — merge node fields; always preserve existing isLockedFact.
+ * Structural childrenIds: union (append new branches); locked nodes only graft children.
+ */
+function deepMergeNodePreservingLock(
   existing: FinancialNode,
   incoming: FinancialNode,
 ): FinancialNode {
+  const mergedChildren = Array.from(
+    new Set([...existing.childrenIds, ...incoming.childrenIds]),
+  )
   return {
     ...existing,
     ...incoming,
-    childrenIds: Array.from(
-      new Set([...existing.childrenIds, ...incoming.childrenIds]),
-    ),
+    isLockedFact: existing.isLockedFact,
+    childrenIds: mergedChildren,
     financialImpact: {
       ...existing.financialImpact,
       ...incoming.financialImpact,
@@ -130,6 +178,7 @@ export function mergeTreeData(
     const existing = nodeMap.get(incoming.id)
     if (existing) {
       if (existing.isLockedFact) {
+        // Preserve lock + all fields; only graft new childrenIds
         nodeMap.set(incoming.id, {
           ...existing,
           childrenIds: Array.from(
@@ -137,10 +186,24 @@ export function mergeTreeData(
           ),
         })
       } else {
-        nodeMap.set(incoming.id, deepMergeNode(existing, incoming))
+        nodeMap.set(
+          incoming.id,
+          deepMergeNodePreservingLock(existing, incoming),
+        )
       }
     } else {
-      nodeMap.set(incoming.id, { ...incoming })
+      // New branches start unlocked
+      nodeMap.set(incoming.id, { ...incoming, isLockedFact: false })
+    }
+  }
+
+  // Parent pointer healing from patch: ensure declared children links exist
+  for (const candidate of newData.nodes) {
+    for (const childId of candidate.childrenIds ?? []) {
+      const parent = nodeMap.get(candidate.id)
+      if (parent && nodeMap.has(childId) && !parent.childrenIds.includes(childId)) {
+        parent.childrenIds = [...parent.childrenIds, childId]
+      }
     }
   }
 
@@ -157,29 +220,21 @@ export function mergeTreeData(
     node.childrenIds = validKids
   }
 
-  for (const incoming of newData.nodes) {
-    for (const candidate of newData.nodes) {
-      if (candidate.childrenIds.includes(incoming.id)) {
-        const parent = nodeMap.get(candidate.id)
-        if (parent && !parent.childrenIds.includes(incoming.id)) {
-          parent.childrenIds = [...parent.childrenIds, incoming.id]
-        }
-      }
-    }
+  const merged: TreeData = {
+    stockSymbol: newData.stockSymbol ?? current.stockSymbol,
+    basePrice: newData.basePrice ?? current.basePrice,
+    lastUpdated: newData.lastUpdated ?? current.lastUpdated,
+    timelineLanes: Array.from(
+      new Set([...current.timelineLanes, ...(newData.timelineLanes ?? [])]),
+    ),
+    nodes: Array.from(nodeMap.values()),
   }
 
-  return {
-    data: {
-      stockSymbol: newData.stockSymbol ?? current.stockSymbol,
-      basePrice: newData.basePrice ?? current.basePrice,
-      lastUpdated: newData.lastUpdated ?? current.lastUpdated,
-      timelineLanes: Array.from(
-        new Set([...current.timelineLanes, ...(newData.timelineLanes ?? [])]),
-      ),
-      nodes: Array.from(nodeMap.values()),
-    },
-    error: null,
+  if (detectCycle(merged.nodes)) {
+    return { data: current, error: TOPOLOGY_LOOP_ERROR }
   }
+
+  return { data: merged, error: null }
 }
 
 export function softExtinguishSiblings(
@@ -209,6 +264,27 @@ export function softExtinguishSiblings(
   }
 
   return { nodes: nextNodes, extinguishedNodeIds: Array.from(extinguished) }
+}
+
+/** Re-evaluate extinguish set from locked facts after topology changes. */
+export function reevaluateExtinguished(
+  nodes: FinancialNode[],
+  priorExtinguished: string[],
+): string[] {
+  const nodeIds = new Set(nodes.map((n) => n.id))
+  let extinguished = new Set(priorExtinguished.filter((id) => nodeIds.has(id)))
+
+  for (const node of nodes) {
+    if (!node.isLockedFact) continue
+    const { extinguishedNodeIds } = softExtinguishSiblings(
+      nodes,
+      node.id,
+      Array.from(extinguished),
+    )
+    extinguished = new Set(extinguishedNodeIds)
+  }
+
+  return Array.from(extinguished)
 }
 
 export function reviveSiblingSubtrees(
@@ -268,12 +344,13 @@ function parseAndValidateFullTree(
       return { ok: false, error: 'JSON must include a "nodes" array.' }
     }
 
+    // Coerce basePrice before DAG / further checks
     const basePrice = coerceNumber(parsed.basePrice)
     if (basePrice == null) {
       return {
         ok: false,
         error:
-          'JSON must include numeric "basePrice" (e.g. 65.69 — not "65.69" in quotes, and not missing).',
+          'JSON must include numeric "basePrice" (e.g. 65.69 — not missing).',
       }
     }
 
@@ -289,20 +366,90 @@ function parseAndValidateFullTree(
         ? parsed.lastUpdated
         : new Date().toISOString().slice(0, 10)
 
-    return {
-      ok: true,
-      data: {
-        stockSymbol: parsed.stockSymbol,
-        basePrice,
-        lastUpdated,
-        timelineLanes: parsed.timelineLanes as string[],
-        nodes: parsed.nodes as TreeData['nodes'],
-      },
+    const data: TreeData = {
+      stockSymbol: parsed.stockSymbol,
+      basePrice,
+      lastUpdated,
+      timelineLanes: parsed.timelineLanes as string[],
+      nodes: parsed.nodes as TreeData['nodes'],
     }
+
+    if (detectCycle(data.nodes)) {
+      return { ok: false, error: TOPOLOGY_LOOP_ERROR }
+    }
+
+    return { ok: true, data }
   } catch (e) {
     return {
       ok: false,
       error: e instanceof Error ? e.message : 'Invalid JSON syntax',
+    }
+  }
+}
+
+function isAssetSnapshot(value: unknown): value is AssetSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const snap = value as Record<string, unknown>
+  if (!snap.treeData || typeof snap.treeData !== 'object') return false
+  const tree = snap.treeData as Record<string, unknown>
+  if (typeof tree.stockSymbol !== 'string') return false
+  if (!Array.isArray(tree.nodes)) return false
+  if (!Array.isArray(snap.activePathNodeIds)) return false
+  if (!Array.isArray(snap.extinguishedNodeIds)) return false
+  return true
+}
+
+export function isRepositoryPayload(
+  value: unknown,
+): value is Record<string, AssetSnapshot> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0) return false
+  return entries.every(([key, snap]) => {
+    if (typeof key !== 'string' || !key) return false
+    return isAssetSnapshot(snap)
+  })
+}
+
+/** Feature C — safe localStorage read */
+export function loadPersistedState(): {
+  repository: Record<string, AssetSnapshot>
+  activeSymbol: string | null
+} {
+  try {
+    const raw = localStorage.getItem(STORAGE_REPO_KEY)
+    const symbolRaw = localStorage.getItem(STORAGE_SYMBOL_KEY)
+    if (!raw) {
+      return { repository: {}, activeSymbol: null }
+    }
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRepositoryPayload(parsed)) {
+      return { repository: {}, activeSymbol: null }
+    }
+    const activeSymbol =
+      symbolRaw && parsed[symbolRaw] ? symbolRaw : Object.keys(parsed)[0] ?? null
+    return { repository: parsed, activeSymbol }
+  } catch {
+    return { repository: {}, activeSymbol: null }
+  }
+}
+
+/** Feature C — safe localStorage write */
+export function persistSandboxState(
+  repository: Record<string, AssetSnapshot>,
+  activeSymbol: string | null,
+): { ok: boolean; error?: string } {
+  try {
+    localStorage.setItem(STORAGE_REPO_KEY, JSON.stringify(repository))
+    localStorage.setItem(STORAGE_SYMBOL_KEY, activeSymbol ?? '')
+    return { ok: true }
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error
+          ? `Persistence failed: ${e.message}`
+          : 'Persistence failed (storage quota?).',
     }
   }
 }
@@ -323,9 +470,11 @@ function updateActiveSnapshot(
   }
 }
 
+const hydrated = loadPersistedState()
+
 export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
-  repository: {},
-  activeSymbol: null,
+  repository: hydrated.repository,
+  activeSymbol: hydrated.activeSymbol,
   mergeError: null,
   pendingIncomingData: null,
   statusToast: null,
@@ -348,10 +497,6 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
     })
   },
 
-  /**
-   * Algorithm A — Ingestion Router Pipeline
-   * NEW_ASSET → pristine snapshot; CONFLICT → stage pendingIncomingData.
-   */
   processIncomingJson: (jsonText) => {
     const parsed = parseAndValidateFullTree(jsonText)
     if (!parsed.ok) {
@@ -362,6 +507,7 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
       return { status: 'ERROR' }
     }
 
+    // Cycle already checked inside parse (after basePrice coercion)
     const data = parsed.data
     const symbol = data.stockSymbol
     const exists = Boolean(get().repository[symbol])
@@ -378,7 +524,6 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
       return { status: 'NEW_ASSET' }
     }
 
-    // Conflict — do not mutate repository yet
     set({
       pendingIncomingData: data,
       mergeError: null,
@@ -386,8 +531,14 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
     return { status: 'CONFLICT' }
   },
 
-  /** Fresh overwrite / first-time write for a symbol */
   executeInitialize: (data) => {
+    if (detectCycle(data.nodes)) {
+      set({
+        mergeError: TOPOLOGY_LOOP_ERROR,
+        pendingIncomingData: null,
+      })
+      return
+    }
     const symbol = data.stockSymbol
     const snapshot = buildPristineSnapshot(data)
     set((state) => ({
@@ -401,7 +552,6 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
     }))
   },
 
-  /** Smart merge into existing snapshot — keeps locks, path, extinguish state */
   executeIncrementalMerge: (data) => {
     const symbol = data.stockSymbol
     const existing = get().repository[symbol]
@@ -413,6 +563,11 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
       return
     }
 
+    if (detectCycle(data.nodes)) {
+      set({ mergeError: TOPOLOGY_LOOP_ERROR })
+      return
+    }
+
     const { data: merged, error } = mergeTreeData(existing.treeData, data)
     if (error) {
       set({ mergeError: error })
@@ -420,7 +575,14 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
     }
 
     const storedTree: TreeData = { ...merged, stockSymbol: symbol }
-    const extinguished = new Set(existing.extinguishedNodeIds)
+
+    // Preserve extinguish membership; re-evaluate from locked facts after topology change
+    const extinguishedNodeIds = reevaluateExtinguished(
+      storedTree.nodes,
+      existing.extinguishedNodeIds,
+    )
+    const extinguished = new Set(extinguishedNodeIds)
+
     const preferred =
       existing.selectedNodeId &&
       storedTree.nodes.some((n) => n.id === existing.selectedNodeId) &&
@@ -439,7 +601,7 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
           treeData: storedTree,
           selectedNodeId: preferred,
           activePathNodeIds,
-          extinguishedNodeIds: existing.extinguishedNodeIds,
+          extinguishedNodeIds,
         },
       },
       activeSymbol: symbol,
@@ -557,4 +719,75 @@ export const useTreeStore = create<MultiAssetStoreState>((set, get) => ({
     }))
     if (patch) set(patch)
   },
+
+  exportVault: () => {
+    const { repository } = get()
+    try {
+      const blob = new Blob([JSON.stringify(repository, null, 2)], {
+        type: 'application/json',
+      })
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `fintree-sandbox-session-${stamp}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      set({ statusToast: 'Vault exported to download' })
+    } catch (e) {
+      set({
+        mergeError:
+          e instanceof Error ? e.message : 'Failed to export vault session.',
+      })
+    }
+  },
+
+  importVault: (jsonText) => {
+    try {
+      const parsed: unknown = JSON.parse(jsonText)
+      if (!isRepositoryPayload(parsed)) {
+        const msg =
+          'Import failed: file must be a Record<stockSymbol, AssetSnapshot>.'
+        set({ mergeError: msg })
+        return { ok: false, error: msg }
+      }
+      const symbols = Object.keys(parsed)
+      const activeSymbol = symbols[0] ?? null
+      set({
+        repository: parsed,
+        activeSymbol,
+        pendingIncomingData: null,
+        mergeError: null,
+        statusToast: `Imported vault (${symbols.length} asset${symbols.length === 1 ? '' : 's'})`,
+      })
+      const persisted = persistSandboxState(parsed, activeSymbol)
+      if (!persisted.ok) {
+        set({ mergeError: persisted.error ?? 'Persistence failed after import.' })
+      }
+      return { ok: true }
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : 'Invalid JSON in vault import.'
+      set({ mergeError: msg })
+      return { ok: false, error: msg }
+    }
+  },
 }))
+
+/** Feature C — reactive persistence after repository / activeSymbol changes */
+useTreeStore.subscribe((state, prev) => {
+  if (
+    state.repository === prev.repository &&
+    state.activeSymbol === prev.activeSymbol
+  ) {
+    return
+  }
+  const result = persistSandboxState(state.repository, state.activeSymbol)
+  if (!result.ok && result.error) {
+    // Avoid recursive loops: only set error if different
+    const current = useTreeStore.getState().mergeError
+    if (current !== result.error) {
+      useTreeStore.setState({ mergeError: result.error })
+    }
+  }
+})

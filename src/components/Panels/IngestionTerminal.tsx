@@ -198,8 +198,9 @@ export function IngestionTerminal() {
 
         <p className="font-mono text-[10px] leading-relaxed text-slate-600">
           Tip: change <span className="text-slate-400">stockSymbol</span> and
-          route again to add another ticker. Switch via the header dropdown —
-          each asset keeps its own path, locks, and extinguished branches.
+          route again to add another ticker. Circular childrenIds are blocked.
+          Use header <span className="text-slate-400">Export / Import Vault</span>{' '}
+          to back up the full sandbox (also auto-saved to localStorage).
         </p>
       </div>
     </aside>
