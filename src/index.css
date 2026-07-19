@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+  font-family:
+    'IBM Plex Sans',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background: #020617;
+  color: #f1f5f9;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* React Flow dark overrides */
+.react-flow__controls-button {
+  background: #0f172a !important;
+  border-bottom-color: #334155 !important;
+  fill: #cbd5e1 !important;
+}
+
+.react-flow__minimap {
+  background: #0f172a !important;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
