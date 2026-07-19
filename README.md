@@ -1,65 +1,112 @@
 # FinTree AI
 
-FinTree AI is a **multi-asset research repository** for exploring strategic scenarios on a chronological timeline. Paste structured JSON for any ticker (CRCL.N, NVDA, AAPL, …), switch assets in the header, merge or overwrite models through the UI — no code changes required.
+**Multi-asset strategic path research sandbox** for equity analysts.
 
-A sample Circle (CRCL.N) JSON payload is pre-filled in the left terminal so you can initialize your first tracker immediately.
+Paste structured JSON for any ticker, explore decision trees on a timeline, lock historical facts, branch what-if scenarios, and compare everything in a portfolio matrix — without changing application code.
+
+---
+
+## UI preview
+
+### Decision Canvas (three-panel workspace)
+
+![FinTree AI Decision Canvas — ingestion terminal, timeline graph, and valuation analyzer](docs/images/fintree-decision-canvas.png)
+
+| Region | What it does |
+|--------|----------------|
+| **Header** | View switcher · asset dropdown · Branch · Export/Import Vault |
+| **Left — Ingestion Router** | Paste JSON · **Parse & Route** · conflict merge/overwrite |
+| **Center — Decision Canvas** | Timeline lanes + React Flow nodes · active path glow |
+| **Right — Valuation Analyzer** | Target price, upside %, CAGR / margin gauges |
+
+### Portfolio Overview Matrix
+
+![FinTree AI Portfolio Matrix — cross-asset scenario scorecard](docs/images/fintree-portfolio-matrix.png)
+
+Full-width scorecard across every loaded scenario: base price, active-path target, implied upside, locked facts, extinguished branch count. Click a row to jump back into that asset’s Decision Canvas.
 
 ---
 
 ## Quick start
 
 ```bash
+cd ~/Documents/07_AIcoding/fintree   # or your clone path
 npm install
 npm run dev
 ```
 
 Open the URL Vite prints (usually `http://127.0.0.1:5173`).
 
-| Command | What it does |
-|---------|----------------|
-| `npm run dev` | Start the local app |
-| `npm run build` | Create a production build |
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Local development server |
+| `npm run build` | Production build |
 | `npm run preview` | Preview the production build |
 
 ---
 
-## What you’ll see
+## Core workflows
 
-| Panel | Purpose |
-|-------|---------|
-| **Header — Ticker Hub** | Dropdown to switch assets; live base price + last updated; remove asset |
-| **Left — Ingestion Router** | Paste JSON; auto-detect symbol; init / merge / overwrite |
-| **Center — Decision Canvas** | Timeline lanes + strategy nodes |
-| **Right — Valuation Analyzer** | Target price, return %, gauges for the active leaf |
+### 1. Load your first ticker
 
-On first boot with an empty repository, the canvas shows a landing prompt until you route your first JSON profile.
+1. Left panel already has a CRCL sample (or paste from [`examples/`](./examples/)).
+2. Click **Parse & Route JSON**.
+3. Canvas + valuation panel populate for that asset.
+
+### 2. Add another ticker
+
+1. Change `"stockSymbol"` (e.g. to `"NVDA"`) — keep `basePrice`, `timelineLanes`, and `nodes`.
+2. Click **Parse & Route JSON** again.
+3. Switch between assets with the **header dropdown**.
+
+One JSON file = one `stockSymbol`. The app stores many assets in a repository vault.
+
+### 3. Existing symbol conflict
+
+If the symbol already exists, FinTree **does not overwrite automatically**. Choose:
+
+- **Combine & Add Branches (Merge)** — incremental patch; locked facts preserved  
+- **Wipe Old & Overwrite (Reset)** — replace that symbol’s snapshot only  
+- **Cancel** — unlock the editor
+
+### 4. Explore & lock facts
+
+| Action | Result |
+|--------|--------|
+| Click a node | Select active path (ancestors + heaviest leaf) |
+| Double-click | Lock as fact → sibling branches **soft-extinguish** (dimmed, non-clickable) |
+| Double-click again | Unlock and revive extinguished siblings |
+
+### 5. Branch a what-if scenario
+
+1. Select an asset in the header.
+2. Click **Branch**.
+3. Name it (default: `Current Symbol - Copy`), e.g. `NVDA - Bull Case`.
+4. A full deep copy is created (path, locks, extinguished) and becomes active.
+
+### 6. Portfolio Matrix
+
+Use the header tabs: **Decision Canvas** ↔ **Portfolio Matrix** to compare all scenarios at once.
+
+### 7. Survive refresh / back up
+
+- Sandbox auto-saves to **localStorage**.
+- **Export Vault** / **Import Vault** download or restore a full session JSON file.
 
 ---
 
-## How to use the app
+## How to feed data (JSON format)
 
-1. **Parse & Route JSON** — Paste a full analyst profile and click the button.
-   - **New symbol** → creates a pristine snapshot (path evaluated), switches to it, toast confirms.
-   - **Existing symbol** → stages a conflict; choose **Combine & Add Branches (Merge)** or **Wipe Old & Overwrite (Reset)**.
-2. **Switch assets** — Use the header dropdown. Each ticker keeps its own selection, active path, and extinguished branches.
-3. **Explore a path** — Click any live node. Active path highlights; inactive branches fade.
-4. **Lock a fact** — Double-click a node. Sibling branches are **soft-extinguished** (opacity 0.1, non-clickable, “EXTINGUISHED BY FACT LOCK” badge).
-5. **Unlock** — Double-click again to clear the fact and revive extinguished siblings.
+Analyst templates live in [`examples/`](./examples/):
 
----
+| File | Use |
+|------|-----|
+| [`examples/blank-profile.template.json`](./examples/blank-profile.template.json) | Start a new ticker |
+| [`examples/crcl-n.full-profile.json`](./examples/crcl-n.full-profile.json) | Full working CRCL.N profile |
+| [`examples/merge-patch.example.json`](./examples/merge-patch.example.json) | Incremental merge sample |
+| [`examples/README.md`](./examples/README.md) | Field checklist |
 
-## How to feed data
-
-**Ready-made examples for analysts** live in [`examples/`](./examples/):
-
-| File | Purpose |
-|------|---------|
-| [`examples/blank-profile.template.json`](./examples/blank-profile.template.json) | Blank scaffold for a new ticker |
-| [`examples/crcl-n.full-profile.json`](./examples/crcl-n.full-profile.json) | Complete working CRCL.N profile |
-| [`examples/merge-patch.example.json`](./examples/merge-patch.example.json) | Incremental merge patch sample |
-| [`examples/README.md`](./examples/README.md) | Field checklist and schema notes |
-
-All input is **JSON** in the left terminal. Full initialize / overwrite payloads need:
+### Required top-level fields
 
 ```json
 {
@@ -73,26 +120,33 @@ All input is **JSON** in the left terminal. Full initialize / overwrite payloads
 
 | Field | Notes |
 |-------|--------|
-| `stockSymbol` | Repository key — must be unique per asset |
-| `basePrice` | Reference price for return % |
-| `timelineLanes` | Ordered time columns |
-| `nodes` | Graph nodes; `lane` must match a timeline lane |
-| `childrenIds` | Links; every child ID must exist in `nodes` |
-| Leaf fields | `targetPrice`, `cagr`, etc. drive the right panel |
+| `stockSymbol` | Repository key (must be unique per scenario) |
+| `basePrice` | **Number** (e.g. `65.69`) — used for return % |
+| `timelineLanes` | Ordered time columns on the canvas |
+| `nodes` | Decision / leaf graph |
 
-**Merge patches** need at least `nodes` (and usually `stockSymbol` when routing). Locked facts resist content overwrite.
+### Node rules
 
----
-
-## Soft-extinguish (fact lock)
-
-Locking a node marks sibling subtrees as extinguished **without removing them** from the graph. History stays on the canvas as faded death paths. Unlocking revives those siblings.
+- Every `childrenIds` entry must exist as a node `id` (no orphans).
+- Every node `lane` should match a `timelineLanes` entry.
+- Leaves should include `targetPrice` for the valuation panel.
+- Circular `childrenIds` graphs are rejected (topology loop guard).
 
 ---
 
-## Stack (for developers)
+## Architecture (short)
+
+- **Zustand** multi-asset vault: `repository[symbol] → AssetSnapshot`  
+  (tree + selection + active path + extinguished IDs)
+- **React Flow** decision canvas with timeline swimlanes
+- Soft-extinguish instead of hard-delete on fact lock
+- localStorage persistence + Export/Import vault
+
+---
+
+## Stack
 
 - React 19 + TypeScript + Vite  
-- Zustand multi-asset store (`stocks[activeSymbol]`)  
-- `@xyflow/react` canvas  
+- Zustand  
+- `@xyflow/react`  
 - Tailwind CSS 4  
